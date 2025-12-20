@@ -6,6 +6,7 @@ import { router as choresRouter } from "./chores.routes.js";
 import { router as bulletinRouter } from "./bulletin.routes.js";
 import { router as authRouter } from "./auth.routes.js";
 import { router as houseRouter } from "./house.routes.js";
+import userController from '../controllers/user.controller.js';
 
 export const router = Router();
 
@@ -26,3 +27,5 @@ router.use("/finance", financeRouter);
 
 // Module 3 – Bảng tin
 router.use("/bulletin", bulletinRouter);
+// Route lấy danh sách user
+router.get('/users', userController.getAllUsers);
