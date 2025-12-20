@@ -1,17 +1,13 @@
-// src/routes/chores.routes.js
-import { Router } from "express";
-import * as choresController from "../controllers/chores.controller.js";
-// import { authMiddleware } from '../middlewares/auth.middleware.js';
+﻿import express from 'express';
+import choresController from '../controllers/chores.controller.js';
 
-export const router = Router();
+export const router = express.Router();
 
-// router.use(authMiddleware);
-
-// GET /api/chores/houses/:houseId/today
-router.get("/houses/:houseId/today", choresController.getTodayChores);
-
-// GET /api/chores/houses/:houseId/leaderboard
-router.get(
-  "/houses/:houseId/leaderboard",
-  choresController.getChoreLeaderboard
-);
+router.post('/generate-daily', choresController.triggerDailyJob);
+router.get('/today', choresController.getToday);
+router.patch('/:id/complete', choresController.complete);
+router.get('/templates', choresController.getTemplates);
+router.post('/templates', choresController.createTemplate);
+router.put('/templates/:id', choresController.updateTemplate);
+router.delete('/templates/:id', choresController.deleteTemplate);
+router.get('/monthly-summary', choresController.getMonthlySummary);

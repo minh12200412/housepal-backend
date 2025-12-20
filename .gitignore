@@ -1,3 +1,10 @@
-PORT=4000
+﻿PORT=4000
 DATABASE_URL=postgres://postgres:1234567@localhost:5432/housepal_db
 JWT_SECRET=housepal_secret
+
+# Bỏ qua thư mục tạm của Visual Studio
+.vs/
+.vscode/
+
+# Bỏ qua thư mục thư viện nodejs (rất quan trọng)
+node_modules/
