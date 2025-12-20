@@ -1,10 +1,14 @@
 // 1. Import chuẩn
 import choresService from '../services/chores.service.js';
+import choreRepo from '../repositories/chores.repository.js';
 
 class ChoresController {
+
+    // API sinh việc thủ công (Test)
     async triggerDailyJob(req, res) {
         try {
-            const jobs = await choresService.generateDailyAssignments();
+            // SỬA: Gọi đúng tên hàm trong Service là generateDailyChores
+            const jobs = await choresService.generateDailyChores();
             res.json({ success: true, message: "Đã sinh việc hôm nay", data: jobs });
         } catch (err) {
             res.status(500).json({ success: false, message: err.message });
@@ -13,10 +17,30 @@ class ChoresController {
 
     async getToday(req, res) {
         try {
-            const chores = await choresService.getTodayChores();
-            res.json({ success: true, data: chores });
-        } catch (err) {
-            res.status(500).json({ success: false, message: err.message });
+            // 1. Thử lấy danh sách việc hôm nay
+            let chores = await choreRepo.getTodayAssignments();
+
+            // 2. LOGIC TỰ ĐỘNG: Nếu chưa có việc nào, gọi hàm sinh việc ngay lập tức
+            if (chores.length === 0) {
+                console.log("Hôm nay chưa có việc, đang tự động sinh...");
+                
+                // SỬA LỖI: Dùng biến 'choresService' (khớp với import ở dòng 2)
+                await choresService.generateDailyChores(); 
+                
+                // Lấy lại danh sách sau khi đã sinh xong
+                chores = await choreRepo.getTodayAssignments();
+            }
+
+            res.json({
+                success: true,
+                data: chores
+            });
+        } catch (error) {
+            console.error(error);
+            res.status(500).json({
+                success: false,
+                message: "Lỗi lấy danh sách việc hôm nay"
+            });
         }
     }
 
@@ -44,7 +68,8 @@ class ChoresController {
     async createTemplate(req, res) {
         try {
             const result = await choresService.createTemplate(req.body);
-            res.status(201).json({ success: true, message: "Thhêm công việc thành công", data: result });
+            // Sửa lỗi chính tả: Thhêm -> Thêm
+            res.status(201).json({ success: true, message: "Thêm công việc thành công", data: result });
         } catch (err) {
             res.status(400).json({ success: false, message: err.message });
         }
@@ -80,12 +105,25 @@ class ChoresController {
                 success: true,
                 message: `Thống kê tháng ${month}/${year}`,
                 data: result
-            })
+            });
         } catch (err) {
             res.status(500).json({ success: false, message: err.message });
         }
     }
+
+    async getIcons(req, res) {
+        const icons = [
+            { code: 'broom', name: 'Quét dọn', url: 'assets/images/icons/broom.png' },
+            { code: 'cooking', name: 'Nấu ăn', url: 'assets/images/icons/cooking.png' },
+            { code: 'trash', name: 'Đổ rác', url: 'assets/images/icons/trash.png' },
+            { code: 'water', name: 'Tưới cây', url: 'assets/images/icons/water.png' },
+            { code: 'laundry', name: 'Giặt ủi', url: 'assets/images/icons/laundry.png' },
+            { code: 'grocery', name: 'Đi chợ', url: 'assets/images/icons/grocery.png' },
+            { code: 'repair', name: 'Sửa chữa', url: 'assets/images/icons/repair.png' },
+            { code: 'wc', name: 'Dọn wc', url: 'assets/images/icons/wc.png' }, // Bổ sung icon WC
+        ];
+        res.json({ success: true, data: icons });
+    }
 }
 
-// 2. QUAN TRỌNG: Phải là export default để file routes import được
 export default new ChoresController();

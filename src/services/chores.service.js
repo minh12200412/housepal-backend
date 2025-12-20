@@ -1,43 +1,74 @@
-﻿// 1. Import chuẩn ES Module
-import choreRepo from '../repositories/chores.repository.js'; // Có đuôi .js
+﻿// src/services/chores.service.js
+import choreRepo from '../repositories/chores.repository.js';
 
-class ChoresService {
-    async generateDailyAssignments() {
-        const templates = await choreRepo.getActiveTemplates();
-        const today = new Date();
-        today.setHours(23, 59, 59, 999);
+class ChoreService {
 
-        const results = [];
+    // 1. SINH VIỆC TỰ ĐỘNG (Đã sửa tên hàm và logic chuẩn)
+    async generateDailyChores() {
+        try {
+            const templates = await choreRepo.getAllTemplates();
+            const today = new Date();
+            const results = [];
 
-        for (const temp of templates) {
-            const assigneeId = temp.rotation_order[temp.current_index];
-            const newJob = await choreRepo.createAssignment(temp.id, assigneeId, today);
-            results.push(newJob);
+            for (const template of templates) {
+                // 1. CHỈ XỬ LÝ VIỆC HÀNG NGÀY
+                // (Nếu muốn làm Weekly, bạn cần check thêm: hôm nay có phải thứ 2 không?)
+                if (template.frequency !== 'daily') continue;
 
-            let nextIndex = temp.current_index + 1;
-            if (nextIndex >= temp.rotation_order.length) {
-                nextIndex = 0;
+                let assigneeId = template.assignee_id; // Mặc định lấy người được gán cứng (cho trường hợp cố định)
+
+                // 2. XỬ LÝ LOGIC NGƯỜI LÀM
+                if (template.is_rotating === true) {
+                    // --- TRƯỜNG HỢP XOAY VÒNG ---
+                    // Kiểm tra kỹ mảng rotation để tránh lỗi
+                    if (template.rotation_order && template.rotation_order.length > 0) {
+                        // Lấy người theo lượt
+                        assigneeId = template.rotation_order[template.current_index];
+
+                        // Tính lượt cho ngày mai
+                        const nextIndex = (template.current_index + 1) % template.rotation_order.length;
+                        
+                        // Cập nhật DB để mai người khác làm
+                        await choreRepo.updateTemplateIndex(template.id, nextIndex);
+                    }
+                } 
+                // --- TRƯỜNG HỢP CỐ ĐỊNH (is_rotating = false) ---
+                // Thì assigneeId vẫn giữ nguyên là template.assignee_id như dòng khai báo đầu tiên
+                // Và KHÔNG cần updateTemplateIndex
+
+                // 3. NẾU KHÔNG TÌM ĐƯỢC NGƯỜI LÀM THÌ BỎ QUA
+                if (!assigneeId) continue;
+
+                // 4. TẠO VIỆC
+                await choreRepo.createAssignment({
+                    template_id: template.id,
+                    assignee_id: assigneeId, // ID người làm (đã tính toán ở trên)
+                    due_date: today
+                });
+                
+                results.push({ 
+                    title: template.title, 
+                    assignee: assigneeId, 
+                    type: template.is_rotating ? "Xoay vòng" : "Cố định" 
+                });
             }
-            await choreRepo.updateTemplateCurrentIndex(temp.id, nextIndex);
+            return results;
+        } catch (error) {
+            console.error("Lỗi sinh việc daily:", error);
+            throw error;
         }
-        return results;
     }
 
-    async getTodayChores() {
-        const startOfDay = new Date();
-        startOfDay.setHours(0, 0, 0, 0);
-
-        const endOfDay = new Date();
-        endOfDay.setHours(23, 59, 59, 999);
-
-        return await choreRepo.getAssignmentsByDate(startOfDay, endOfDay);
-    }
-
+    // 2. HOÀN THÀNH CÔNG VIỆC
     async completeChore(assignmentId, userId) {
+        // Lưu ý: Repository cần có các hàm findAssignmentById, findTemplateById, updateAssignmentStatus, logScore
+        // Nếu chưa có, bạn cần bổ sung vào repository.
+        
         const assignment = await choreRepo.findAssignmentById(assignmentId);
         if (!assignment) throw new Error('Không tìm thấy công việc');
         if (assignment.status === 'COMPLETED') throw new Error('Việc này đã hoàn thành rồi');
 
+        // Lấy thông tin mẫu việc để tính điểm
         const template = await choreRepo.findTemplateById(assignment.template_id);
 
         let points = template.base_points;
@@ -45,15 +76,18 @@ class ChoresService {
         let type = 'COMPLETION';
         let reason = `Hoàn thành: ${template.title}`;
 
+        // Kiểm tra làm hộ (userId gửi lên khác assignee_id trong db)
         if (parseInt(userId) !== assignment.assignee_id) {
             isHelp = true;
             points += template.bonus_points;
             type = 'HELP_BONUS';
-            reason = `Làm hộ đồng đội: ${template.title}`;
+            reason = `Làm hộ: ${template.title}`;
         }
 
+        // Cập nhật trạng thái
         const updatedAssignment = await choreRepo.updateAssignmentStatus(assignmentId, 'COMPLETED', userId);
 
+        // Ghi lịch sử điểm
         await choreRepo.logScore({
             userId: userId,
             assignmentId: assignmentId,
@@ -65,46 +99,53 @@ class ChoresService {
         return { updatedAssignment, points, isHelp };
     }
 
+    // 3. CÁC HÀM CRUD TEMPLATE (Wrapper)
     async getAllTemplates() {
         return await choreRepo.getAllTemplates();
     }
 
     async createTemplate(data) {
+        // Gọi repo tạo template (Đảm bảo repo có hàm createTemplate)
         return await choreRepo.createTemplate(data);
     }
 
     async updateTemplate(id, data) {
+        // Đảm bảo repo có hàm updateTemplate
         return await choreRepo.updateTemplate(id, data);
     }
 
-    async deactivateTemplate(id) {
-        return await choreRepo.deactivateTemplate(id);
+    // Đổi tên từ deactivateTemplate -> deleteTemplate cho khớp Controller
+    async deleteTemplate(id) {
+        // Đảm bảo repo có hàm deleteTemplate
+        return await choreRepo.deleteTemplate(id);
     }
 
-    async getMonthlySummary(year, month) {
+    // 4. THỐNG KÊ THÁNG
+    async getMonthlySummary(month, year) {
+        // Tính ngày đầu và cuối tháng
         const startOfMonth = new Date(year, month - 1, 1);
         startOfMonth.setHours(0, 0, 0, 0);
 
-        const endOfMonth = new Date(year, month, 0);
+        const endOfMonth = new Date(year, month, 0); // Ngày 0 của tháng sau = Ngày cuối tháng này
         endOfMonth.setHours(23, 59, 59, 999);
 
+        // Gọi repo lấy bảng xếp hạng
         const leaderboard = await choreRepo.getMonthlyScores(startOfMonth, endOfMonth);
 
-        if (leaderboard.length === 0) {
-            return { message: "Chưa có dữ liệu trong tháng này", leaderboard: [] };
+        if (!leaderboard || leaderboard.length === 0) {
+            return { message: "Chưa có dữ liệu người dùng", leaderboard: [] };
         }
 
-        const winner = leaderboard[0];
-        const loser = leaderboard[leaderboard.length - 1];
+        const winner = leaderboard[0]; 
+        const loser = leaderboard[leaderboard.length - 1]; 
 
         return {
-            month: `${year}/${month}`,
-            winner: winner,
-            loser: loser,
-            leaderboard: leaderboard
+            month: `${month}/${year}`,
+            winner: winner, 
+            loser: loser,    
+            leaderboard: leaderboard 
         };
     }
 }
 
-// 2. Export chuẩn ES Module
-export default new ChoresService();
+export default new ChoreService();
