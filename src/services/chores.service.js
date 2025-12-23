@@ -105,18 +105,82 @@ class ChoreService {
     }
 
     async createTemplate(data) {
-        // Gọi repo tạo template (Đảm bảo repo có hàm createTemplate)
-        return await choreRepo.createTemplate(data);
+        // 1. Tạo Mẫu việc (Lưu vào chore_templates)
+        const newTemplate = await choreRepo.createTemplate(data);
+
+        // 2. [LOGIC MỚI] Kiểm tra và sinh việc NGAY LẬP TỨC cho hôm nay
+        try {
+            const today = new Date();
+            let shouldCreateNow = false;
+
+            // Trường hợp 1: Việc Hàng ngày (Daily) -> Luôn tạo ngay để làm
+            if (newTemplate.frequency === 'daily') {
+                shouldCreateNow = true;
+            }
+            
+            // Trường hợp 2: Việc Đột xuất (Adhoc) -> Chỉ tạo nếu ngày chọn trùng với Hôm nay
+            if (newTemplate.frequency === 'none' && data.dueDate) {
+                const dueDate = new Date(data.dueDate);
+                if (
+                    dueDate.getDate() === today.getDate() &&
+                    dueDate.getMonth() === today.getMonth() &&
+                    dueDate.getFullYear() === today.getFullYear()
+                ) {
+                    shouldCreateNow = true;
+                }
+            }
+
+            // Trường hợp 3: Việc Hàng tuần (Weekly) -> Tạm thời tạo luôn cho nóng (hoặc check thứ)
+            if (newTemplate.frequency === 'weekly') {
+                shouldCreateNow = true;
+            }
+
+            // --- THỰC HIỆN TẠO ASSIGNMENT ---
+            if (shouldCreateNow) {
+                console.log("Đang tạo assignment ngay lập tức cho việc mới...");
+                
+                await choreRepo.createAssignment({
+                    template_id: newTemplate.id,
+                    assignee_id: newTemplate.assignee_id, // Lấy người được gán trong template
+                    due_date: data.dueDate ? new Date(data.dueDate) : today // Nếu adhoc lấy ngày chọn, còn lại lấy today
+                });
+            }
+
+        } catch (error) {
+            console.error("Lỗi khi auto-generate việc mới thêm:", error);
+            // Không throw error ở đây để tránh báo lỗi cho Frontend, 
+            // vì việc chính là Tạo Template đã thành công rồi.
+        }
+
+        return newTemplate;
     }
 
     async updateTemplate(id, data) {
-        // Đảm bảo repo có hàm updateTemplate
-        return await choreRepo.updateTemplate(id, data);
+        // 1. Cập nhật bản ghi trong bảng Template
+        const updatedTemplate = await choreRepo.updateTemplate(id, data);
+
+        // 2. [LOGIC MỚI] Đồng bộ thay đổi sang việc của hôm nay (Nếu chưa làm)
+        // Nếu vừa sửa tên, điểm, hoặc người làm -> Cập nhật luôn cho việc đang treo
+        try {
+            await choreRepo.syncPendingAssignment(id, {
+                assignee_id: updatedTemplate.assignee_id, // Cập nhật người làm mới
+                // (Các trường khác như title, points... thường lấy join từ template nên không cần update bên assignment, 
+                // nhưng assignee_id thì nằm cứng ở bảng assignment nên phải sửa)
+            });
+        } catch (error) {
+            console.error("Lỗi đồng bộ việc đang treo:", error);
+        }
+
+        return updatedTemplate;
     }
 
     // Đổi tên từ deactivateTemplate -> deleteTemplate cho khớp Controller
     async deleteTemplate(id) {
-        // Đảm bảo repo có hàm deleteTemplate
+        // 1. [LOGIC MỚI] Dọn dẹp các việc chưa làm của template này
+        // (Để tránh việc Template mất rồi mà Assignment vẫn hiện)
+        await choreRepo.deletePendingAssignmentsByTemplate(id);
+
+        // 2. Xóa Template gốc
         return await choreRepo.deleteTemplate(id);
     }
 
@@ -145,6 +209,40 @@ class ChoreService {
             loser: loser,    
             leaderboard: leaderboard 
         };
+    }
+
+    async processOverdueChores() {
+        try {
+            // 1. Tìm các việc quá hạn
+            const overdueList = await choreRepo.findOverdueAssignments();
+            
+            if (overdueList.length === 0) return 0; // Không có việc gì quá hạn
+
+            const failedIds = [];
+
+            // 2. Lặp qua từng việc để trừ điểm
+            for (const job of overdueList) {
+                failedIds.push(job.id);
+                
+                // Ghi lịch sử trừ điểm (Lưu ý: pointsChange là số âm)
+                await choreRepo.logScore({
+                    userId: job.assignee_id,
+                    assignmentId: job.id,
+                    pointsChange: -job.penalty_points, // Dấu trừ
+                    reason: `Quá hạn: ${job.title}`,
+                    type: 'PENALTY'
+                });
+            }
+
+            // 3. Cập nhật trạng thái trong DB thành FAILED
+            await choreRepo.markAsFailed(failedIds);
+            
+            console.log(`Đã xử lý phạt ${failedIds.length} công việc quá hạn.`);
+            return failedIds.length;
+        } catch (error) {
+            console.error("Lỗi xử lý overdue:", error);
+            return 0; // Tránh crash app nếu lỗi
+        }
     }
 }
 

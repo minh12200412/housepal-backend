@@ -23,6 +23,8 @@ class ChoresController {
             // 2. LOGIC TỰ ĐỘNG: Nếu chưa có việc nào, gọi hàm sinh việc ngay lập tức
             if (chores.length === 0) {
                 console.log("Hôm nay chưa có việc, đang tự động sinh...");
+
+                await choresService.processOverdueChores();
                 
                 // SỬA LỖI: Dùng biến 'choresService' (khớp với import ở dòng 2)
                 await choresService.generateDailyChores(); 
@@ -118,7 +120,7 @@ class ChoresController {
             { code: 'trash', name: 'Đổ rác', url: 'assets/images/icons/trash.png' },
             { code: 'water', name: 'Tưới cây', url: 'assets/images/icons/water.png' },
             { code: 'laundry', name: 'Giặt ủi', url: 'assets/images/icons/laundry.png' },
-            { code: 'grocery', name: 'Đi chợ', url: 'assets/images/icons/grocery.png' },
+            { code: 'card', name: 'Đi chợ', url: 'assets/images/icons/card.png' },
             { code: 'repair', name: 'Sửa chữa', url: 'assets/images/icons/repair.png' },
             { code: 'wc', name: 'Dọn wc', url: 'assets/images/icons/wc.png' }, // Bổ sung icon WC
         ];

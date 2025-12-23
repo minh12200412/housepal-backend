@@ -123,8 +123,66 @@ class ChoreRepository {
          return rows[0];
     }
 
+    async deletePendingAssignmentsByTemplate(templateId) {
+        try {
+            const sqlDeleteScores = `
+                DELETE FROM score_history 
+                WHERE assignment_id IN (
+                    SELECT id FROM chore_assignments WHERE template_id = $1
+                )
+            `;
+            await db.query(sqlDeleteScores, [templateId]);
+
+            const sqlDeleteAssignments = 'DELETE FROM chore_assignments WHERE template_id = $1';
+            await db.query(sqlDeleteAssignments, [templateId]);
+
+            return true;
+        } catch (error) {
+            console.error("Lỗi khi dọn dẹp dữ liệu liên quan:", error);
+            throw error;
+        }
+    }
+
+    // 2. Hàm xóa Template gốc
     async deleteTemplate(id) {
-        await db.query('DELETE FROM chore_templates WHERE id = $1', [id]);
+        try {
+            const sql = 'DELETE FROM chore_templates WHERE id = $1';
+            
+            const result = await db.query(sql, [id]);
+            
+            // Kiểm tra số dòng bị xóa bằng .rowCount
+            if (result.rowCount === 0) {
+                return false; 
+            }
+            return true; 
+        } catch (error) {
+            console.error("Lỗi khi xóa template:", error);
+            throw error;
+        }
+    }
+
+    async findOverdueAssignments() {
+        const query = `
+            SELECT ca.id, ca.assignee_id, ct.title, ct.penalty_points
+            FROM chore_assignments ca
+            JOIN chore_templates ct ON ca.template_id = ct.id
+            WHERE ca.status = 'PENDING' 
+            AND ca.due_date::date < CURRENT_DATE
+        `;
+        const { rows } = await db.query(query);
+        return rows;
+    }
+
+    // [MỚI] Đánh dấu thất bại
+    async markAsFailed(ids) {
+        if (ids.length === 0) return;
+        // Chuyển mảng ID thành chuỗi (VD: 1,2,3) để query
+        const query = `
+            UPDATE chore_assignments 
+            SET status = 'FAILED', updated_at = NOW() 
+            WHERE id = ANY($1::int[])
+        `;
+        await db.query(query, [ids]);
     }
 }
 
