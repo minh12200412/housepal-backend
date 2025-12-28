@@ -1,6 +1,6 @@
 // src/repositories/finance.repository.js
-import { pool, query } from "../config/db.js";
-
+import db, { query } from "../config/db.js";
+const { pool } = db;
 const withTransaction = async (fn) => {
   const client = await pool.connect();
   try {
@@ -44,7 +44,7 @@ export const getFundSummary = async (houseId, month, year) => {
     ),
   ]);
 
-  const contributionAmount = settingRows[0]?.quy || 0;
+  const contributionAmount = settingRows[0]?.contribution_amount || 0;
   const totalContributions = Number(contributionRows[0]?.total || 0);
   const totalExpenses = Number(expenseRows[0]?.total || 0);
   const balance = totalContributions - totalExpenses;
@@ -113,31 +113,43 @@ export const createContribution = async (
   month,
   year,
   contributionDate,
-  receiptImage,
   note
 ) => {
   const { rows } = await query(
-    `INSERT INTO fund_contributions (house_id, member_id, amount, month, year, contribution_date, status, receipt_image, note)
-     VALUES ($1, $2, $3, $4, $5, $6, 'contributed', $7, $8)
+    `INSERT INTO fund_contributions (
+       house_id,
+       member_id,
+       amount,
+       month,
+       year,
+       contribution_date,
+       status,
+       note
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, 'contributed', $7)
      ON CONFLICT (house_id, member_id, month, year)
-     DO UPDATE SET amount = EXCLUDED.amount,
-                   contribution_date = EXCLUDED.contribution_date,
-                   status = EXCLUDED.status,
-                   receipt_image = EXCLUDED.receipt_image,
-                   note = EXCLUDED.note,
-                   updated_at = NOW()
-     RETURNING id, status, contribution_date AS contributed_at, receipt_image, note`,
+     DO UPDATE SET
+       amount = EXCLUDED.amount,
+       contribution_date = EXCLUDED.contribution_date,
+       status = EXCLUDED.status,
+       note = EXCLUDED.note,
+       updated_at = NOW()
+     RETURNING
+       id,
+       status,
+       contribution_date AS contributed_at,
+       note`,
     [
-      houseId,
-      memberId,
-      amount,
-      month,
-      year,
-      contributionDate,
-      receiptImage,
-      note,
+      houseId, // $1
+      memberId, // $2
+      amount, // $3
+      month, // $4
+      year, // $5
+      contributionDate, // $6 -> đúng là contribution_date
+      note, // $7 -> note
     ]
   );
+
   return rows[0];
 };
 
@@ -149,9 +161,8 @@ export const listContributions = async (houseId, month, year) => {
         u.username AS member_name,
         fc.amount,
         fc.status,
-        fc.contribution_date::date AS contributed_at,
-        fc.receipt_image,
-        fc.note
+      fc.contribution_date::date AS contributed_at,
+      fc.note
      FROM fund_contributions fc
      LEFT JOIN house_members hm ON hm.id = fc.member_id
      LEFT JOIN users u ON u.id = hm.user_id
@@ -168,29 +179,21 @@ export const createCommonExpense = async (
   title,
   description,
   amount,
-  expenseDate,
-  category,
-  receiptImage
+  expenseDate
 ) => {
   const { rows } = await query(
-    `INSERT INTO common_fund_expenses (house_id, paid_by, title, description, amount, expense_date, category, receipt_image)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-     RETURNING id, paid_by, title, amount, expense_date, category, receipt_image, created_at`,
-    [
-      houseId,
-      paidBy,
-      title,
-      description,
-      amount,
-      expenseDate,
-      category,
-      receiptImage,
-    ]
+    `INSERT INTO common_fund_expenses (house_id, paid_by, title, description, amount, expense_date)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, paid_by, title, amount, expense_date, created_at`,
+    [houseId, paidBy, title, description, amount, expenseDate]
   );
   return rows[0];
 };
 
 export const listCommonExpenses = async (houseId, month, year) => {
+  const monthInt = month ? Number(month) : null;
+  const yearInt = year ? Number(year) : null;
+
   const { rows } = await query(
     `SELECT
         cfe.id AS expense_id,
@@ -200,18 +203,17 @@ export const listCommonExpenses = async (houseId, month, year) => {
         cfe.title,
         cfe.description,
         cfe.amount,
-        cfe.expense_date,
-        cfe.category,
-        cfe.receipt_image
+        cfe.expense_date
      FROM common_fund_expenses cfe
      LEFT JOIN house_members hm ON hm.id = cfe.paid_by
      LEFT JOIN users u ON u.id = hm.user_id
      WHERE cfe.house_id = $1
-       AND ($2 IS NULL OR EXTRACT(MONTH FROM cfe.expense_date) = $2)
-       AND ($3 IS NULL OR EXTRACT(YEAR FROM cfe.expense_date) = $3)
+       AND ($2::int IS NULL OR EXTRACT(MONTH FROM cfe.expense_date) = $2::int)
+       AND ($3::int IS NULL OR EXTRACT(YEAR  FROM cfe.expense_date) = $3::int)
      ORDER BY cfe.expense_date DESC, cfe.created_at DESC`,
-    [houseId, month || null, year || null]
+    [houseId, monthInt, yearInt] // 👈 dùng monthInt, yearInt
   );
+
   return rows;
 };
 
@@ -276,17 +278,10 @@ export const createAdHocExpense = async (
 
       if (split.memberId !== paidBy) {
         const { rows: debtRows } = await client.query(
-          `INSERT INTO debt_records (house_id, debtor_id, creditor_id, original_amount, remaining_amount, from_expense_id, from_expense_split_id, status)
-           VALUES ($1, $2, $3, $4, $4, $5, $6, 'pending')
+          `INSERT INTO debt_records (house_id, debtor_id, creditor_id, amount, from_expense_id, status)
+           VALUES ($1, $2, $3, $4, $5, 'pending')
            RETURNING *`,
-          [
-            houseId,
-            split.memberId,
-            paidBy,
-            split.amountOwed,
-            expense.id,
-            splitRow.id,
-          ]
+          [houseId, split.memberId, paidBy, split.amountOwed, expense.id]
         );
         debtResults.push(debtRows[0]);
       }
@@ -297,23 +292,32 @@ export const createAdHocExpense = async (
 };
 
 export const listAdHocExpenses = async (houseId, month, year) => {
+  // Ép kiểu an toàn
+  const monthInt = month ? Number(month) : null;
+  const yearInt = year ? Number(year) : null;
+
   const { rows: expenses } = await query(
-    `SELECT ahe.*, u.username AS paid_by_name
+    `SELECT 
+        ahe.*,
+        u.username AS paid_by_name
      FROM ad_hoc_expenses ahe
      LEFT JOIN house_members hm ON hm.id = ahe.paid_by
      LEFT JOIN users u ON u.id = hm.user_id
      WHERE ahe.house_id = $1
-       AND ($2 IS NULL OR EXTRACT(MONTH FROM ahe.expense_date) = $2)
-       AND ($3 IS NULL OR EXTRACT(YEAR FROM ahe.expense_date) = $3)
+       AND ($2::int IS NULL OR EXTRACT(MONTH FROM ahe.expense_date) = $2::int)
+       AND ($3::int IS NULL OR EXTRACT(YEAR  FROM ahe.expense_date)  = $3::int)
      ORDER BY ahe.expense_date DESC, ahe.created_at DESC`,
-    [houseId, month || null, year || null]
+    [houseId, monthInt, yearInt]
   );
 
   if (expenses.length === 0) return [];
 
   const expenseIds = expenses.map((e) => e.id);
+
   const { rows: splits } = await query(
-    `SELECT es.*, u.username AS member_name
+    `SELECT 
+        es.*,
+        u.username AS member_name
      FROM expense_splits es
      LEFT JOIN house_members hm ON hm.id = es.member_id
      LEFT JOIN users u ON u.id = hm.user_id
@@ -325,6 +329,7 @@ export const listAdHocExpenses = async (houseId, month, year) => {
     ...exp,
     splits: splits.filter((s) => s.expense_id === exp.id),
   }));
+
   return grouped;
 };
 
@@ -399,8 +404,8 @@ export const updateAdHocExpense = async (houseId, expenseId, payload) => {
 
       if (split.memberId !== expense.paid_by) {
         const { rows: debtRows } = await client.query(
-          `INSERT INTO debt_records (house_id, debtor_id, creditor_id, original_amount, remaining_amount, from_expense_id, from_expense_split_id, status)
-           VALUES ($1, $2, $3, $4, $4, $5, $6, 'pending')
+          `INSERT INTO debt_records (house_id, debtor_id, creditor_id, amount, from_expense_id, status)
+           VALUES ($1, $2, $3, $4, $5, 'pending')
            RETURNING *`,
           [
             houseId,
@@ -408,7 +413,6 @@ export const updateAdHocExpense = async (houseId, expenseId, payload) => {
             expense.paid_by,
             split.amountOwed,
             expense.id,
-            splitRow.id,
           ]
         );
         debtResults.push(debtRows[0]);
@@ -470,18 +474,21 @@ export const listDebtsByMember = async (houseId, memberId, status) => {
         udeb.username AS debtor_name,
         dr.creditor_id,
         ucred.username AS creditor_name,
-        dr.original_amount,
-        dr.remaining_amount,
+        dr.amount AS original_amount,
         dr.status,
         dr.created_at,
-        ahe.title AS from_expense
+        ahe.title AS from_expense,
+        COALESCE(SUM(CASE WHEN dp.confirmed IS NULL OR dp.confirmed = TRUE THEN dp.amount_paid ELSE 0 END), 0) AS paid_amount,
+        dr.amount - COALESCE(SUM(CASE WHEN dp.confirmed IS NULL OR dp.confirmed = TRUE THEN dp.amount_paid ELSE 0 END), 0) AS remaining_amount
      FROM debt_records dr
      LEFT JOIN house_members hmd ON hmd.id = dr.debtor_id
      LEFT JOIN users udeb ON udeb.id = hmd.user_id
      LEFT JOIN house_members hmc ON hmc.id = dr.creditor_id
      LEFT JOIN users ucred ON ucred.id = hmc.user_id
      LEFT JOIN ad_hoc_expenses ahe ON ahe.id = dr.from_expense_id
+     LEFT JOIN debt_payments dp ON dp.debt_id = dr.id
      WHERE ${whereClause}
+     GROUP BY dr.id, dr.debtor_id, udeb.username, dr.creditor_id, ucred.username, dr.amount, dr.status, dr.created_at, ahe.title
      ORDER BY dr.created_at DESC`,
     params
   );
@@ -500,17 +507,22 @@ export const getDebtSummary = async (houseId) => {
         udeb.username AS debtor_name,
         dr.creditor_id,
         ucred.username AS creditor_name,
-        SUM(dr.remaining_amount) AS remaining_amount,
-        SUM(dr.original_amount) AS original_amount,
+        SUM(dr.amount) AS original_amount,
+        SUM(dr.amount - COALESCE(paid.total_paid, 0)) AS remaining_amount,
         MIN(dr.status) AS status
      FROM debt_records dr
      LEFT JOIN house_members hmd ON hmd.id = dr.debtor_id
      LEFT JOIN users udeb ON udeb.id = hmd.user_id
      LEFT JOIN house_members hmc ON hmc.id = dr.creditor_id
      LEFT JOIN users ucred ON ucred.id = hmc.user_id
+     LEFT JOIN (
+        SELECT debt_id, SUM(CASE WHEN confirmed IS NULL OR confirmed = TRUE THEN amount_paid ELSE 0 END) AS total_paid
+        FROM debt_payments
+        GROUP BY debt_id
+     ) paid ON paid.debt_id = dr.id
      WHERE dr.house_id = $1
      GROUP BY dr.debtor_id, udeb.username, dr.creditor_id, ucred.username
-     HAVING SUM(dr.remaining_amount) > 0
+     HAVING SUM(dr.amount - COALESCE(paid.total_paid, 0)) > 0
      ORDER BY debtor_name, creditor_name`,
     [houseId]
   );
@@ -547,12 +559,6 @@ export const createDebtPayment = async (
     }
     const debt = debtRows[0];
 
-    const newRemaining = Math.max(
-      Number(debt.remaining_amount) - Number(amountPaid),
-      0
-    );
-    const newStatus = newRemaining === 0 ? "settled" : "partial_paid";
-
     const { rows: paymentRows } = await client.query(
       `INSERT INTO debt_payments (debt_id, amount_paid, payment_date, payment_method, note, proof_image, confirmed)
        VALUES ($1, $2, $3, $4, $5, $6, FALSE)
@@ -560,22 +566,35 @@ export const createDebtPayment = async (
       [debtId, amountPaid, paymentDate, paymentMethod, note, proofImage]
     );
 
-    await client.query(
-      `UPDATE debt_records
-         SET remaining_amount = $2,
-             status = $3,
-             settled_at = CASE WHEN $2 = 0 THEN NOW() ELSE NULL END,
-             updated_at = NOW()
-       WHERE id = $1`,
-      [debtId, newRemaining, newStatus]
+    const { rows: aggRows } = await client.query(
+      `SELECT
+          dr.amount AS original_amount,
+          COALESCE(SUM(CASE WHEN dp.confirmed IS NULL OR dp.confirmed = TRUE THEN dp.amount_paid ELSE 0 END), 0) AS total_paid
+       FROM debt_records dr
+       LEFT JOIN debt_payments dp ON dp.debt_id = dr.id
+       WHERE dr.id = $1
+       GROUP BY dr.amount`,
+      [debtId]
     );
 
-    const updated = {
-      ...debt,
-      remaining_amount: newRemaining,
-      status: newStatus,
+    const originalAmount = Number(aggRows[0]?.original_amount || 0);
+    const totalPaid = Number(aggRows[0]?.total_paid || 0);
+    const remaining = Math.max(originalAmount - totalPaid, 0);
+    const newStatus = remaining === 0 ? "settled" : "partial_paid";
+
+    await client.query(
+      `UPDATE debt_records
+         SET status = $2,
+             updated_at = NOW()
+       WHERE id = $1`,
+      [debtId, newStatus]
+    );
+
+    const updated = { ...debt, status: newStatus };
+    return {
+      payment: paymentRows[0],
+      debt: { ...updated, remaining_amount: remaining },
     };
-    return { payment: paymentRows[0], debt: updated };
   });
 };
 
@@ -645,24 +664,27 @@ export const getFundHistory = async (houseId, month, year, type) => {
 };
 
 export const getExpenseStatistics = async (houseId, month, year) => {
+  const monthInt = month ? Number(month) : null;
+  const yearInt = year ? Number(year) : null;
+
   const [totalCommonResult, byCategoryResult, byMemberResult] =
     await Promise.all([
       query(
         `SELECT COALESCE(SUM(amount), 0) AS total
        FROM common_fund_expenses
        WHERE house_id = $1
-         AND ($2 IS NULL OR EXTRACT(MONTH FROM expense_date) = $2)
-         AND ($3 IS NULL OR EXTRACT(YEAR FROM expense_date) = $3)`,
-        [houseId, month || null, year || null]
+         AND ($2::int IS NULL OR EXTRACT(MONTH FROM expense_date) = $2::int)
+         AND ($3::int IS NULL OR EXTRACT(YEAR FROM expense_date) = $3::int)`,
+        [houseId, monthInt, yearInt]
       ),
       query(
         `SELECT category, COALESCE(SUM(amount), 0) AS total
        FROM common_fund_expenses
        WHERE house_id = $1
-         AND ($2 IS NULL OR EXTRACT(MONTH FROM expense_date) = $2)
-         AND ($3 IS NULL OR EXTRACT(YEAR FROM expense_date) = $3)
+         AND ($2::int IS NULL OR EXTRACT(MONTH FROM expense_date) = $2::int)
+         AND ($3::int IS NULL OR EXTRACT(YEAR FROM expense_date) = $3::int)
        GROUP BY category`,
-        [houseId, month || null, year || null]
+        [houseId, monthInt, yearInt]
       ),
       query(
         `SELECT u.username AS member_name, COALESCE(SUM(cfe.amount), 0) AS total
@@ -670,10 +692,10 @@ export const getExpenseStatistics = async (houseId, month, year) => {
        LEFT JOIN house_members hm ON hm.id = cfe.paid_by
        LEFT JOIN users u ON u.id = hm.user_id
        WHERE cfe.house_id = $1
-         AND ($2 IS NULL OR EXTRACT(MONTH FROM cfe.expense_date) = $2)
-         AND ($3 IS NULL OR EXTRACT(YEAR FROM cfe.expense_date) = $3)
+         AND ($2::int IS NULL OR EXTRACT(MONTH FROM cfe.expense_date) = $2::int)
+         AND ($3::int IS NULL OR EXTRACT(YEAR FROM cfe.expense_date) = $3::int)
        GROUP BY u.username`,
-        [houseId, month || null, year || null]
+        [houseId, monthInt, yearInt]
       ),
     ]);
 

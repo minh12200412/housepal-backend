@@ -45,7 +45,6 @@ export const addContribution = async (houseId, payload) => {
     month,
     year,
     payload.contributionDate || new Date(),
-    payload.receiptImage || null,
     payload.note || null
   );
 };
