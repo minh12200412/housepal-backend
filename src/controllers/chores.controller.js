@@ -126,6 +126,55 @@ class ChoresController {
         ];
         res.json({ success: true, data: icons });
     }
+
+    async getTodayStats(req, res) {
+        try {
+            const stats = await choreRepo.getTodayStats();
+            return res.status(200).json(stats);
+        } catch (error) {
+            console.error(error);
+            return res.status(500).json({ message: "Lỗi Server khi lấy thống kê" });
+        }
+    };
+
+    async getTopLeaderboard(req, res){
+        try {
+            const data = await choreRepo.getTopLeaderboard();
+            return res.status(200).json(data);
+        } catch (error) {
+            return res.status(500).json({ message: "Lỗi server khi lấy BXH" });
+        }
+    };
+
+    async getMonthlyLeaderboard(req, res) {
+        try {
+            // Lấy month, year từ query params (vd: ?month=12&year=2025)
+            const { month, year } = req.query;
+            
+            if (!month || !year) {
+                return res.status(400).json({ message: "Thiếu thông tin tháng/năm" });
+            }
+            const data = await choreRepo.getMonthlyLeaderboard(month, year);
+            return res.status(200).json(data);
+        } catch (error) {
+            return res.status(500).json({ message: "Lỗi server" });
+        }
+    };
+
+    async getScoreHistory(req, res) {
+        try {
+            const { username, month, year } = req.query;
+            
+            if (!username || !month || !year) {
+                return res.status(400).json({ message: "Thiếu thông tin username/tháng/năm" });
+            }
+
+            const data = await choreRepo.getScoreHistoryByUser(username, month, year);
+            return res.status(200).json(data);
+        } catch (error) {
+            return res.status(500).json({ message: "Lỗi server" });
+        }
+    };
 }
 
 export default new ChoresController();
