@@ -477,6 +477,7 @@ export const listDebtsByMember = async (houseId, memberId, status) => {
         dr.amount AS original_amount,
         dr.status,
         dr.created_at,
+        dr.from_expense_id AS expense_id,
         ahe.title AS from_expense,
         COALESCE(SUM(CASE WHEN dp.confirmed IS NULL OR dp.confirmed = TRUE THEN dp.amount_paid ELSE 0 END), 0) AS paid_amount,
         dr.amount - COALESCE(SUM(CASE WHEN dp.confirmed IS NULL OR dp.confirmed = TRUE THEN dp.amount_paid ELSE 0 END), 0) AS remaining_amount
@@ -488,7 +489,7 @@ export const listDebtsByMember = async (houseId, memberId, status) => {
      LEFT JOIN ad_hoc_expenses ahe ON ahe.id = dr.from_expense_id
      LEFT JOIN debt_payments dp ON dp.debt_id = dr.id
      WHERE ${whereClause}
-     GROUP BY dr.id, dr.debtor_id, udeb.username, dr.creditor_id, ucred.username, dr.amount, dr.status, dr.created_at, ahe.title
+     GROUP BY dr.id, dr.debtor_id, udeb.username, dr.creditor_id, ucred.username, dr.amount, dr.status, dr.created_at, dr.from_expense_id, ahe.title
      ORDER BY dr.created_at DESC`,
     params
   );
