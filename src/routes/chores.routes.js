@@ -5,6 +5,7 @@ import userController from '../controllers/user.controller.js';
 export const router = express.Router();
 
 router.get('/leaderboard/top', choresController.getTopLeaderboard); // Lấy top 3 bảng xếp hạng
+router.get('/scores/my-stats', choresController.getMyScoreStats);
 
 router.post('/generate-daily', choresController.triggerDailyJob); // Tạo công việc hàng ngày
 router.get('/today', choresController.getToday); // Lấy công việc trong ngày

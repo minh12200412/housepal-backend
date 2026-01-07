@@ -175,6 +175,18 @@ class ChoresController {
             return res.status(500).json({ message: "Lỗi server" });
         }
     };
+
+    async getMyScoreStats(req, res) {
+        try {
+            // Tạm thời lấy userId = 1 (Long) để test, sau này lấy từ req.user.id
+            const userId = 1; 
+            
+            const stats = await choreRepo.getMyScoreStats(userId);
+            return res.status(200).json(stats);
+        } catch (error) {
+            return res.status(500).json({ message: "Lỗi server khi lấy điểm cá nhân" });
+        }
+    };
 }
 
 export default new ChoresController();

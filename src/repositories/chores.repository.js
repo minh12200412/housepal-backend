@@ -265,29 +265,74 @@ class ChoreRepository {
         }
     }
 
+    // File: src/repositories/chores.repository.js
+
     async getScoreHistoryByUser(username, month, year) {
         try {
             const query = `
                 SELECT 
+                    sh.id,
                     sh.points_change,
                     sh.created_at,
                     sh.reason,
-                    sh.type, -- 'BONUS' hoặc 'PENALTY'
-                    ct.title as chore_title,
+                    sh.type, 
+                    -- Ưu tiên lấy tên từ Template, nếu không có thì lấy title của Assignment, cuối cùng là reason
+                    COALESCE(ct.title, 'Công việc đã xóa') as chore_title,
                     ct.icon_type
                 FROM score_history sh
                 JOIN users u ON sh.user_id = u.id
+                -- Dùng LEFT JOIN để giữ lại lịch sử điểm ngay cả khi công việc gốc đã bị xóa
                 LEFT JOIN chore_assignments ca ON sh.assignment_id = ca.id
                 LEFT JOIN chore_templates ct ON ca.template_id = ct.id 
                 WHERE u.username = $1
+                -- QUAN TRỌNG: Lọc theo tháng/năm của thời điểm ĐƯỢC CỘNG ĐIỂM (created_at)
                 AND EXTRACT(MONTH FROM sh.created_at) = $2
                 AND EXTRACT(YEAR FROM sh.created_at) = $3
                 ORDER BY sh.created_at DESC
             `;
+            
+            // Log ra để kiểm tra xem Frontend gửi lên cái gì
+            console.log(`Fetching history for: ${username}, Month: ${month}, Year: ${year}`);
+
             const { rows } = await db.query(query, [username, month, year]);
             return rows;
         } catch (error) {
             console.error("Lỗi lấy lịch sử điểm:", error);
+            throw error;
+        }
+    }
+
+    async checkAssignmentExists(templateId, dateStr) {
+        // dateStr dạng '2025-12-10'
+        const query = `
+            SELECT id FROM chore_assignments 
+            WHERE template_id = $1 
+            AND due_date::date = $2::date
+        `;
+        const { rows } = await db.query(query, [templateId, dateStr]);
+        return rows.length > 0; // Trả về true nếu đã có
+    }
+
+    // [MỚI] Lấy thống kê điểm cá nhân tháng này
+    async getMyScoreStats(userId) {
+        try {
+            // Logic:
+            // 1. Tính tổng điểm DƯƠNG (Bonus)
+            // 2. Tính tổng điểm ÂM (Penalty)
+            // 3. Trong tháng hiện tại
+            const query = `
+                SELECT 
+                    COALESCE(SUM(CASE WHEN points_change > 0 THEN points_change ELSE 0 END), 0)::int as bonus_points,
+                    COALESCE(SUM(CASE WHEN points_change < 0 THEN points_change ELSE 0 END), 0)::int as penalty_points,
+                    COALESCE(SUM(points_change), 0)::int as total_points
+                FROM score_history
+                WHERE user_id = $1
+                AND created_at >= DATE_TRUNC('month', CURRENT_DATE)
+            `;
+            const { rows } = await db.query(query, [userId]);
+            return rows[0]; // Trả về object { bonus_points: 10, penalty_points: -5, total_points: 5 }
+        } catch (error) {
+            console.error("Lỗi lấy thống kê điểm cá nhân:", error);
             throw error;
         }
     }
