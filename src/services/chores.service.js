@@ -135,6 +135,25 @@ class ChoreService {
             type: type
         });
 
+        // Nếu là làm hộ -> đồng thời ghi PENALTY cho người được giao (assignee)
+        // (Tránh ghi trùng nếu đã có PENALTY)
+        if (isHelp) {
+            try {
+                const alreadyPenalized = await choreRepo.hasPenaltyLoggedForAssignment(assignmentId);
+                if (!alreadyPenalized && template.penalty_points && parseInt(template.penalty_points, 10) > 0) {
+                    await choreRepo.logScore({
+                        userId: assignment.assignee_id,
+                        assignmentId: assignmentId,
+                        pointsChange: -Math.abs(parseInt(template.penalty_points, 10)),
+                        reason: `Không hoàn thành (làm hộ): ${template.title}`,
+                        type: 'PENALTY'
+                    });
+                }
+            } catch (err) {
+                console.error('Lỗi khi ghi penalty cho assignee:', err);
+            }
+        }
+
         return { updatedAssignment, points, isHelp };
     }
 

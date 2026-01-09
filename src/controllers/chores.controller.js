@@ -49,9 +49,12 @@ class ChoresController {
     async complete(req, res) {
         try {
             const { id } = req.params;
-            const { userId } = req.body;
+            // Prefer authenticated user id (if auth middleware sets req.user),
+            // fallback to body.userId for older clients.
+            const performerId = (req.user && req.user.id) ? req.user.id : (req.body.userId || null);
+            if (!performerId) return res.status(400).json({ success: false, message: 'Missing userId' });
 
-            const result = await choresService.completeChore(id, userId);
+            const result = await choresService.completeChore(id, performerId);
             res.json({ success: true, message: "Hoàn thành!", data: result });
         } catch (err) {
             res.status(400).json({ success: false, message: err.message });
