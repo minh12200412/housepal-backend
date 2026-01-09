@@ -3,47 +3,52 @@ import choreRepo from '../repositories/chores.repository.js';
 
 class ChoreService {
 
-    // 1. SINH VIỆC TỰ ĐỘNG (Đã sửa tên hàm và logic chuẩn)
     async generateDailyChores() {
         try {
             const templates = await choreRepo.getAllTemplates();
-            const today = new Date();
+            
+            // SỬA 1: Format ngày chuẩn YYYY-MM-DD để so sánh chính xác trong DB
+            // new Date() gốc có cả giờ phút giây, so sánh rất khó
+            const todayStr = new Date().toISOString().split('T')[0]; 
+            
             const results = [];
 
             for (const template of templates) {
                 // 1. CHỈ XỬ LÝ VIỆC HÀNG NGÀY
-                // (Nếu muốn làm Weekly, bạn cần check thêm: hôm nay có phải thứ 2 không?)
                 if (template.frequency !== 'daily') continue;
 
-                let assigneeId = template.assignee_id; // Mặc định lấy người được gán cứng (cho trường hợp cố định)
+                // --- [QUAN TRỌNG] BƯỚC 1.5: KIỂM TRA XEM ĐÃ TẠO VIỆC HÔM NAY CHƯA ---
+                // Bạn cần thêm hàm này vào choreRepo (xem code bên dưới)
+                const isExist = await choreRepo.checkAssignmentExists(template.id, todayStr);
+                
+                if (isExist) {
+                    console.log(`[SKIP] Việc "${template.title}" đã được tạo cho ngày ${todayStr}`);
+                    continue; // Bỏ qua ngay, KHÔNG xoay vòng, KHÔNG tạo mới
+                }
 
                 // 2. XỬ LÝ LOGIC NGƯỜI LÀM
+                let assigneeId = template.assignee_id; 
+
                 if (template.is_rotating === true) {
-                    // --- TRƯỜNG HỢP XOAY VÒNG ---
-                    // Kiểm tra kỹ mảng rotation để tránh lỗi
                     if (template.rotation_order && template.rotation_order.length > 0) {
-                        // Lấy người theo lượt
+                        // Lấy người hiện tại
                         assigneeId = template.rotation_order[template.current_index];
 
                         // Tính lượt cho ngày mai
                         const nextIndex = (template.current_index + 1) % template.rotation_order.length;
                         
-                        // Cập nhật DB để mai người khác làm
+                        // Cập nhật DB
                         await choreRepo.updateTemplateIndex(template.id, nextIndex);
                     }
                 } 
-                // --- TRƯỜNG HỢP CỐ ĐỊNH (is_rotating = false) ---
-                // Thì assigneeId vẫn giữ nguyên là template.assignee_id như dòng khai báo đầu tiên
-                // Và KHÔNG cần updateTemplateIndex
-
-                // 3. NẾU KHÔNG TÌM ĐƯỢC NGƯỜI LÀM THÌ BỎ QUA
+                
                 if (!assigneeId) continue;
 
                 // 4. TẠO VIỆC
                 await choreRepo.createAssignment({
                     template_id: template.id,
-                    assignee_id: assigneeId, // ID người làm (đã tính toán ở trên)
-                    due_date: today
+                    assignee_id: assigneeId,
+                    due_date: todayStr // Truyền chuỗi ngày chuẩn
                 });
                 
                 results.push({ 
