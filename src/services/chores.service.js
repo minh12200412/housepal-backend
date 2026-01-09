@@ -7,49 +7,83 @@ class ChoreService {
         try {
             const templates = await choreRepo.getAllTemplates();
             
-            // SỬA 1: Format ngày chuẩn YYYY-MM-DD để so sánh chính xác trong DB
-            // new Date() gốc có cả giờ phút giây, so sánh rất khó
-            const todayStr = new Date().toISOString().split('T')[0]; 
+            // --- SỬA 1: Xử lý Timezone Việt Nam ---
+            // Sử dụng 'en-CA' để luôn trả về định dạng YYYY-MM-DD
+            // Đảm bảo dù chạy lúc 1h sáng vẫn ra đúng ngày hiện tại ở VN
+            const todayStr = new Date().toLocaleDateString('en-CA', { 
+                timeZone: 'Asia/Ho_Chi_Minh' 
+            });
+
+            console.log(`--- Bắt đầu quét việc ngày: ${todayStr} ---`);
             
             const results = [];
 
-            for (const template of templates) {
-                // 1. CHỈ XỬ LÝ VIỆC HÀNG NGÀY
+            for (const templateOriginal of templates) {
+                const template = { ...templateOriginal };
+
+                // 1. Chuẩn hóa dữ liệu (Giữ nguyên logic tốt của bạn)
+                const isRotating = ['t', 'true', '1', 1, true].includes(template.is_rotating);
+                template.is_rotating = isRotating;
+
+                if (typeof template.rotation_order === 'string') {
+                    try {
+                        template.rotation_order = JSON.parse(template.rotation_order);
+                    } catch (err) {
+                        template.rotation_order = template.rotation_order.split(',').map(s => s.trim()).filter(Boolean);
+                    }
+                }
+                if (!Array.isArray(template.rotation_order)) template.rotation_order = [];
+                
+                // Ép kiểu current_index
+                template.current_index = parseInt(template.current_index, 10) || 0;
+
+                // 2. Chỉ xử lý việc DAILY
                 if (template.frequency !== 'daily') continue;
 
-                // --- [QUAN TRỌNG] BƯỚC 1.5: KIỂM TRA XEM ĐÃ TẠO VIỆC HÔM NAY CHƯA ---
-                // Bạn cần thêm hàm này vào choreRepo (xem code bên dưới)
+                // 3. Kiểm tra trùng lặp
                 const isExist = await choreRepo.checkAssignmentExists(template.id, todayStr);
-                
                 if (isExist) {
-                    console.log(`[SKIP] Việc "${template.title}" đã được tạo cho ngày ${todayStr}`);
-                    continue; // Bỏ qua ngay, KHÔNG xoay vòng, KHÔNG tạo mới
+                    console.log(`[SKIP] ID ${template.id}: Đã có việc cho ngày ${todayStr}`);
+                    continue; 
                 }
 
-                // 2. XỬ LÝ LOGIC NGƯỜI LÀM
-                let assigneeId = template.assignee_id; 
+                // 4. LOGIC TÍNH NGƯỜI LÀM (ASSIGNEE)
+                let assigneeId = template.assignee_id;
+                let nextIndex = null; // Biến lưu index tương lai
 
-                if (template.is_rotating === true) {
-                    if (template.rotation_order && template.rotation_order.length > 0) {
-                        // Lấy người hiện tại
-                        assigneeId = template.rotation_order[template.current_index];
+                if (template.is_rotating && template.rotation_order.length > 0) {
+                    // Ép kiểu ID trong mảng rotation về số nguyên
+                    const order = template.rotation_order.map(o => parseInt(o, 10));
+                    
+                    // Logic xoay vòng (Modulo)
+                    const idx = template.current_index % order.length;
+                    assigneeId = order[idx];
 
-                        // Tính lượt cho ngày mai
-                        const nextIndex = (template.current_index + 1) % template.rotation_order.length;
-                        
-                        // Cập nhật DB
-                        await choreRepo.updateTemplateIndex(template.id, nextIndex);
-                    }
-                } 
-                
-                if (!assigneeId) continue;
+                    // Tính toán lượt tiếp theo (nhưng chưa update vội)
+                    nextIndex = (idx + 1) % order.length;
+                    
+                    console.log(`[ROTATION] ID ${template.id}: Index ${idx} -> Người làm ${assigneeId}. Index ngày mai sẽ là ${nextIndex}`);
+                }
 
-                // 4. TẠO VIỆC
+                if (!assigneeId) {
+                    console.warn(`[WARNING] ID ${template.id}: Không tìm thấy người làm hợp lệ.`);
+                    continue;
+                }
+
+                // 5. TẠO VIỆC TRƯỚC (An toàn hơn)
+                // Nếu bước này lỗi, code sẽ nhảy xuống catch và KHÔNG cập nhật index xoay vòng => Đảm bảo nhất quán
                 await choreRepo.createAssignment({
                     template_id: template.id,
                     assignee_id: assigneeId,
-                    due_date: todayStr // Truyền chuỗi ngày chuẩn
+                    due_date: todayStr
                 });
+
+                // 6. NẾU LÀ VIỆC XOAY VÒNG -> CẬP NHẬT INDEX CHO NGÀY MAI
+                // --- SỬA 2: Di chuyển xuống sau khi tạo việc thành công ---
+                if (template.is_rotating && nextIndex !== null) {
+                    await choreRepo.updateTemplateIndex(template.id, nextIndex);
+                    console.log(`[UPDATE] ID ${template.id}: Đã cập nhật current_index thành ${nextIndex}`);
+                }
                 
                 results.push({ 
                     title: template.title, 
@@ -100,6 +134,25 @@ class ChoreService {
             reason: reason,
             type: type
         });
+
+        // Nếu là làm hộ -> đồng thời ghi PENALTY cho người được giao (assignee)
+        // (Tránh ghi trùng nếu đã có PENALTY)
+        if (isHelp) {
+            try {
+                const alreadyPenalized = await choreRepo.hasPenaltyLoggedForAssignment(assignmentId);
+                if (!alreadyPenalized && template.penalty_points && parseInt(template.penalty_points, 10) > 0) {
+                    await choreRepo.logScore({
+                        userId: assignment.assignee_id,
+                        assignmentId: assignmentId,
+                        pointsChange: -Math.abs(parseInt(template.penalty_points, 10)),
+                        reason: `Không hoàn thành (làm hộ): ${template.title}`,
+                        type: 'PENALTY'
+                    });
+                }
+            } catch (err) {
+                console.error('Lỗi khi ghi penalty cho assignee:', err);
+            }
+        }
 
         return { updatedAssignment, points, isHelp };
     }
@@ -228,8 +281,15 @@ class ChoreService {
             // 2. Lặp qua từng việc để trừ điểm
             for (const job of overdueList) {
                 failedIds.push(job.id);
-                
+                // Nếu đã có PENALTY cho assignment này thì bỏ qua
+                const alreadyPenalized = await choreRepo.hasPenaltyLoggedForAssignment(job.id);
+                if (alreadyPenalized) {
+                    console.log(`Assignment ${job.id} đã có PENALTY, bỏ qua.`);
+                    continue;
+                }
+
                 // Ghi lịch sử trừ điểm (Lưu ý: pointsChange là số âm)
+                console.log(`Ghi PENALTY cho assignment ${job.id} (assignee ${job.assignee_id}), penalty_points=${job.penalty_points}, title=${job.title}`);
                 await choreRepo.logScore({
                     userId: job.assignee_id,
                     assignmentId: job.id,
