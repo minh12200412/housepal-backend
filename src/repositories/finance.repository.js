@@ -560,9 +560,10 @@ export const createDebtPayment = async (
     }
     const debt = debtRows[0];
 
+    // Ghi nhận thanh toán và coi như đã xác nhận ngay (avoid pending state)
     const { rows: paymentRows } = await client.query(
-      `INSERT INTO debt_payments (debt_id, amount_paid, payment_date, payment_method, note, proof_image, confirmed)
-       VALUES ($1, $2, $3, $4, $5, $6, FALSE)
+      `INSERT INTO debt_payments (debt_id, amount_paid, payment_date, payment_method, note, proof_image, confirmed, confirmed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, TRUE, NOW())
        RETURNING *`,
       [debtId, amountPaid, paymentDate, paymentMethod, note, proofImage]
     );
