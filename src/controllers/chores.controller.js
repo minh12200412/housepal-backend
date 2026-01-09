@@ -163,24 +163,34 @@ class ChoresController {
 
     async getScoreHistory(req, res) {
         try {
-            const { username, month, year } = req.query;
-            
-            if (!username || !month || !year) {
-                return res.status(400).json({ message: "Thiếu thông tin username/tháng/năm" });
+            // Hỗ trợ cả userId (frontend hiện gửi userId) và username (legacy)
+            const { username, userId, month, year } = req.query;
+
+            if ((!username && !userId) || !month || !year) {
+                return res.status(400).json({ message: "Thiếu thông tin userId/username hoặc tháng/năm" });
             }
 
-            const data = await choreRepo.getScoreHistoryByUser(username, month, year);
+            let data;
+            if (userId) {
+                // Nếu frontend gửi userId (thường là số)
+                data = await choreRepo.getScoreHistoryByUserId(userId, month, year);
+            } else {
+                // Fallback: tìm theo username
+                data = await choreRepo.getScoreHistoryByUser(username, month, year);
+            }
+
             return res.status(200).json(data);
         } catch (error) {
+            console.error('Error in getScoreHistory:', error);
             return res.status(500).json({ message: "Lỗi server" });
         }
     };
 
     async getMyScoreStats(req, res) {
         try {
-            // Tạm thời lấy userId = 1 (Long) để test, sau này lấy từ req.user.id
-            const userId = 1; 
-            
+            // Hỗ trợ lấy userId từ query param nếu frontend gửi lên, fallback về 1
+            const userId = req.query.userId ? parseInt(req.query.userId, 10) : 1;
+
             const stats = await choreRepo.getMyScoreStats(userId);
             return res.status(200).json(stats);
         } catch (error) {
