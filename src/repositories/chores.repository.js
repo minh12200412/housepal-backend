@@ -185,6 +185,17 @@ class ChoreRepository {
         await db.query(query, [ids]);
     }
 
+    // Kiểm tra xem assignment đã có penalty log hay chưa (tránh ghi trùng)
+    async hasPenaltyLoggedForAssignment(assignmentId) {
+        const query = `
+            SELECT id FROM score_history
+            WHERE assignment_id = $1 AND type = 'PENALTY'
+            LIMIT 1
+        `;
+        const { rows } = await db.query(query, [assignmentId]);
+        return rows.length > 0;
+    }
+
     async getTodayStats() {
         try {
             const query = `
@@ -298,6 +309,37 @@ class ChoreRepository {
             return rows;
         } catch (error) {
             console.error("Lỗi lấy lịch sử điểm:", error);
+            throw error;
+        }
+    }
+
+    // Lấy lịch sử điểm theo user_id (thay vì username)
+    async getScoreHistoryByUserId(userId, month, year) {
+        try {
+            const query = `
+                SELECT 
+                    sh.id,
+                    sh.points_change,
+                    sh.created_at,
+                    sh.reason,
+                    sh.type,
+                    COALESCE(ct.title, 'Công việc đã xóa') as chore_title,
+                    ct.icon_type
+                FROM score_history sh
+                LEFT JOIN chore_assignments ca ON sh.assignment_id = ca.id
+                LEFT JOIN chore_templates ct ON ca.template_id = ct.id 
+                WHERE sh.user_id = $1
+                AND EXTRACT(MONTH FROM sh.created_at) = $2
+                AND EXTRACT(YEAR FROM sh.created_at) = $3
+                ORDER BY sh.created_at DESC
+            `;
+
+            console.log(`Fetching history for userId: ${userId}, Month: ${month}, Year: ${year}`);
+
+            const { rows } = await db.query(query, [userId, month, year]);
+            return rows;
+        } catch (error) {
+            console.error("Lỗi lấy lịch sử điểm theo userId:", error);
             throw error;
         }
     }
